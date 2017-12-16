@@ -1,0 +1,280 @@
+################################# Statements #################################################
+# Author: Zeng Ruochen, Michael  									                                           
+# Date: 03/09/2017                                                                           
+# Email: xkd17@hku.hk; micalzrc@gmail.com                                        
+##############################################################################################
+rm(list=ls())
+setwd("C:/Users/Zeng Ruochen/OneDrive/Citi Quant/")
+# Working directory should be the path where client.R is located.
+source("config.R")
+
+# Select tables from KDB for further data analysis. 
+##################################### Extract Volatility and Volume ########################################
+res <- lapply(exchanges, Get_Exchange)
+names(res) <- exchanges
+
+dat_sg <- res[[exchanges[1]]]
+vol_sg <- dat_sg[['vol']]
+volume_sg <- dat_sg[['volume']]
+
+dat_in <- res[[exchanges[2]]]
+vol_in <- dat_in[['vol']]
+volume_in <- dat_in[['volume']]
+
+#################################### Obtain the indices using from local files #############################
+#################################### Singapore STI index ###################################################
+sti <- read.csv('C:/Users/Zeng Ruochen/OneDrive/Citi Quant/^STI.csv', 
+                na.strings = NULL, header = T, stringsAsFactors = F)
+# Compute daily volatility. 
+sti_ohlc <- sti[, 2 : 5]# xts(as.numeric(sti$Close), order.by = as.Date(sti$Date))
+sti_vol <- Open2Close_vol(tab_ohlc = sti_ohlc, date = sti$Date)
+names(sti_vol) <- "sti"
+chartSeries(sti_vol)
+# Get the daily volume. 
+sti_volume <- xts(as.numeric(sti$Vol.), order.by = as.Date(sti$Date))
+names(sti_volume) <- "sti"
+chartSeries(sti_volume)
+
+#################################### India NIFTY 50 index ################################################# 
+nsei <- read.csv('C:/Users/Zeng Ruochen/OneDrive/Citi Quant/^NSEI.csv', header = T)
+# Compute daily volatility. 
+nsei_ohlc <- nsei[2 : 5]
+nsei_vol <- Open2Close_vol(nsei_ohlc, nsei$Date)
+names(nsei_vol) <- "nsei"
+chartSeries(nsei_vol)
+# Get the daily volume. 
+nsei_volume <- xts(nsei$Volume, order.by = as.Date(nsei$Date))
+names(nsei_volume) <- "nsei"
+chartSeries(nsei_volume)
+
+#################################### Japan Nikkei 225 index ############################################### 
+n225 <- read.csv('C:/Users/Zeng Ruochen/OneDrive/Citi Quant/^N225.csv', header = T)
+# Compute daily volatility. 
+n225_ohlc <- n225[2 : 5]
+n225_vol <- Open2Close_vol(n225_ohlc, n225$Date)
+names(n225_vol) <- "n225"
+chartSeries(n225_vol)
+# Get the daily volume. 
+n225_volume <- xts(n225$Volume, order.by = as.Date(n225$Date))
+names(n225_volume) <- "n225"
+chartSeries(n225_volume)
+
+#################################### US S&P 500 index ##################################################### 
+gspc <- read.csv('C:/Users/Zeng Ruochen/OneDrive/Citi Quant/^GSPC.csv', header = T)
+# Compute daily volatility. 
+gspc_ohlc <- gspc[2 : 5]
+gspc_vol <- Open2Close_vol(gspc_ohlc, gspc$Date)
+names(gspc_vol) <- "gspc"
+chartSeries(gspc_vol)
+# Get the daily volume. 
+gspc_volume <- xts(as.numeric(gspc$Volume), order.by = as.Date(gspc$Date))
+names(gspc_volume) <- "gspc"
+chartSeries(gspc_volume)
+
+#################################### Daily index and stock volatility #####################################
+#################################### Dimension Reduction ##################################################
+markets = list(india = list(vol_in, volume_in), singapore = list(vol_sg, volume_sg))
+for (market in markets) {
+  par(mfrow = c(1, 1))
+  par(bg = 'white')
+  
+  # Note: use price to denote the value series, and vol to denote the volume. 
+  price <- as.matrix(market[[1]])
+  vol <- as.matrix(market[[2]])
+  
+  timeStamp <- rownames(price)
+  timeIndex <- 1 : length(timeStamp)
+  
+  equityNames <- colnames(price)
+  names(timeStamp) <- "Date"
+  
+  ###################################### Smoothing #############################################
+  #Create a B-spline basis using the timeIndex variable. 
+  splineBasis <- create.bspline.basis(c(1, timeIndex[length(timeIndex)]), 
+                                      nbasis = bsplineBasis, norder = bsplineOrder)
+  ###################################### Price Series ##########################################
+  #Choose the optimal lambda value based on GCV for the price data.
+  logLams <- seq(rightInterval, leftInterval, 0.5)
+  nLam <- length(logLams)
+  
+  gcvs <- sapply(1 : nLam, partial(ChooseLambda, y = logLams, basis = splineBasis, 
+                                   lfd = 2, argvals = timeIndex, data = price))
+  logLam <- logLams[gcvs == min(gcvs)]
+  lambda <- 10 ^ (logLam)
+  plot(x = logLams, y = gcvs, type = "b")
+  abline(v = logLam, lty = 2)
+  
+  #Smooth the price data at the optimal lambda value and plot all the curves in a single graph.
+  fdParObj <- fdPar(splineBasis, 2, lambda)
+  priceFd <- smooth.basis(timeIndex, price, fdParObj)$fd
+  names <- list("Date" = timeStamp, "Equity Name" = equityNames, "Price")
+  priceFd$fdnames <- names
+  
+  #Plot all the price curves in a single plot.
+  plot(priceFd)
+  
+  # Plot the fitted curve and the raw data equity by equity for price. 
+  #plotfit.fd(price, timeIndex, priceFd)
+  ###################################### Volumn Series #########################################
+  #Choose the optimal lambda value based on GCV for the volume data.
+  gcvs2 <- sapply(1 : nLam, partial(ChooseLambda, y = logLams, basis = splineBasis, 
+                                    lfd = 2, argvals = timeIndex, data = vol))
+  logLam2 <- logLams[gcvs == min(gcvs)]
+  lambda2 <- 10 ^ (logLam2)
+  plot(x = logLams, y = gcvs2, type = "b")
+  abline(v = logLam2, lty = 2) 
+  #The optimal GCV value is quite close around its neighborhood s.t. 
+  #the optimal lambda value need not be changed. 
+  
+  #Smooth the volume data at the optimal lambda value and plot all the curves in a single graph,
+  #plot all the volume curves in a single plot,
+  #and then plot the fitted curve and the raw data equity by equity for volumn.
+  volFd <- smooth.basis(timeIndex, vol, fdParObj)$fd
+  names <- list("Date" = timeStamp, "Equity Name" = equityNames, "Volumn")
+  volFd$fdnames <- names
+  plot(volFd)
+  #plotfit.fd(vol, timeIndex, volFd)
+  
+  ###################################### PCA for Price ########################################## 
+  #How many PC's should be retained?
+  pricePCAList <- pca.fd(priceFd, nharm = 2)
+  plot.pca.fd(pricePCAList)
+  
+  #VARIMAX rotation.
+  priceRotatePCAList <- varmx.pca.fd(pricePCAList)
+  plot.pca.fd(priceRotatePCAList)
+  
+  OptiPC(x = 2, y = priceRotatePCAList, neig = 12)
+  #Plot the principal component scores for pairs of harmonics. 
+  PCScore <- priceRotatePCAList$scores
+  plot(x = PCScore[, 1], y = PCScore[, 2], main = "Principal Component Scores",
+       xlab = "Rotated Harmonic I", ylab = "Rotated Harmonic II")
+  text(PCScore[, 1], PCScore[, 2], equityNames, cex = 0.6, pos = 4, col="blue") 
+  
+  ###################################### CCA ################################################# 
+  #Define the fdPar object for CCA with total canonical pairs of 3. 
+  ccaFdPar = fdPar(splineBasis, 2, 1e6) 
+  ncon = 3
+  
+  #Create an object of class cca.fd using two fd objects and two fdPar objects. 
+  ccaList = cca.fd(priceFd, volFd, ncon, ccaFdPar, ccaFdPar)
+  
+  #The canonical weight functional data objects, 
+  #as well as the corresponding three squared canonical correlations are extracted.
+  ccaWtPrice = ccaList$ccawtfd1 
+  ccaWtVol = ccaList$ccawtfd2 
+  corrs = ccaList$ccacor
+  
+  #VARIMAX rotation.
+  ccaRotateList <- varmx.cca.fd(ccaList)
+  
+  #Plot the two canonical weight functions.
+  plot.cca.fd(ccaRotateList)
+  
+  #Plot the scores for the first price canonical variable and the volume counterparts.
+  ccaScrPrice = ccaList$ccavar1 
+  ccaScrVol = ccaList$ccavar2
+  par(mfrow = c(1, 1))
+  plot(x = ccaScrPrice, y = ccaScrVol, main = "Canonical Scores",
+       xlab = "Price Canonical Weight", ylab = "Volumn Canonical Weight")
+  text(ccaScrPrice, ccaScrVol, equityNames, cex = 0.6, pos = 4, col = "blue")  
+}
+
+#################################### Multiple Correlation ##################################################
+markets = list(india = list(vol_in, nsei_vol), singapore = list(vol_sg, sti_vol))
+for (market in markets) {
+  dat <- na.omit(merge(market[[1]], market[[2]]), join='inner')
+  colnames(dat)[ncol(dat)] <- "Y"
+  # Cross validation is used to avoid overfitting. 
+  mod <- pcr(Y ~., data = dat, ncomp = 8, validation = "CV") 
+  summary(mod)
+}
+
+#################################### Indices Relationship ################################################## 
+# Plot all the indices within a matrix. 
+par(mfrow = c(2, 2))
+plot(sti_vol); plot(nsei_vol) ;plot(n225_vol) ;plot(gspc_vol)
+
+#################################### Time Series Analysis ################################################## 
+# Visualize the autocorrelation structure: nonstationarity is confirmed. 
+par(mfrow = c(2, 2))
+TSA::acf(sti_vol); TSA::acf(nsei_vol); TSA::acf(n225_vol); TSA::acf(gspc_vol)
+
+# Cointegration.
+dat <- na.omit(merge(sti_vol, nsei_vol, n225_vol, gspc_vol), join='inner')
+yJoTest <- ca.jo(dat, type = c("trace"), ecdet = c("none"), K = 4)
+summary(yJoTest)
+# Johansen procedure barely confirms one cointegration relationship at 10% level of significance. 
+
+# Extract the spread series.
+coin_mat <- yJoTest@V
+co_factor <- coin_mat[, 1]
+spread <- xts(dat %*% co_factor, order.by = index(dat))
+chartSeries(spread)
+acf(spread) 
+# The ACF plot of the spread extracted shows the ACF decays faster but still persistent. 
+summary(ur.df(spread))     
+# The ADF test of spread fails to reject the null of nonstationarity at all significance levels. 
+
+# Build a multivariate time series model using the VAR model. 
+# There is no cointegration relationship, so we do not need to worry about the issue of overdifferencing. 
+ret_dat <- Reduce(cbind, lapply(1 : ncol(dat), function(i) dailyReturn(dat[, i], type = "log")))
+colnames(ret_dat) <- colnames(dat)
+# Use ADF test to check the stationarity of individual time series. 
+lapply(1 : ncol(ret_dat), function(i) summary(ur.df(ret_dat[ ,i])))
+
+# Use visualization to further confirm the stationarity. 
+par(mfrow = c(2, 2))
+lapply(1 : ncol(ret_dat), function(i) acf(ret_dat[ ,i]))     
+lapply(1 : ncol(ret_dat), function(i) plot(ret_dat[ ,i]))
+# Rather week autocorrelation structure for each individual log return of the index volatility series can be found from ACF plots. 
+# This can be further verified, as the log return fluctuates significantlyaround 0 (the assumed mean). 
+
+VARselect(ret_dat,lag.max = 8)
+# Fit the VAR model of order 1. 
+var1 <- VAR(ret_dat, p = 1)
+summary(var1) 
+
+#################################### Daily Stock Volume Analysis ###########################################
+markets = list(india = list(volume_in, nsei_volume), singapore = list(volume_sg, sti_volume))
+
+for (market in markets) {
+  volume_stock <- market[[1]]
+  volume_index <- market[[2]]
+  # Compute the average daily volume of the stocks. 
+  avg_volume <- apply(volume_stock, 1, mean)
+  # Compare with the index volume. 
+  par(mfrow = c(2, 1))
+  par(bg = 'white')
+  plot(avg_volume, type = "l")
+  plot(volume_index)
+
+  days <- sample(1 : nrow(volume_stock), size = 8)
+  dates <- index(volume_stock)[days]
+  
+  par(mfrow = c(2, 2))
+  for (i in 1 : 8) {
+    #hist(as.vector(unclass(volume_stock[1, ])), breaks = 100)
+    density_volume <- density(as.vector(unclass(volume_stock[i, ])))
+    plot(density_volume, main = dates[i])
+  }
+}
+
+#################################### Volatility and Volume #################################################
+# Other than functional CCA, for a specific stock
+# simple correlation measures the strength of the linear relationship between daily volatility and volume.
+markets = list(india = list(vol_in, volume_in), singapore = list(vol_sg, volume_sg))
+for (market in markets) {
+  corr <- sapply(1 : ncol(market[[1]]), function(i) cor(market[[1]][, i], market[[2]][, i]))
+  names(corr) <- colnames(market[[1]])
+  
+  # Show the highest and lowest 5 stocks in terms of correlation between vol and volume. 
+  (corr_high5 <- sort(corr, decreasing = T)[1 : 5])
+  (corr_low5 <- sort(corr, decreasing = F)[1 : 5])
+  # Compute the proportion of positive correlations. 
+  (sum(corr >= 0) / length(corr))
+  # Plot the distribution of correlation in histogram. 
+  par(mfrow = c(1, 1)) 
+  hist(corr)
+}
+
