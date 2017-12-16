@@ -1,0 +1,82 @@
+from qpython import qconnection, qcollection
+import pandas_datareader.data as web
+import qpython
+import datetime
+import numpy
+import random
+import YahooTickerDownloader as yt
+import tablib
+import pandas as pd
+
+# Specify the markets of interest, i.e. Singapore, India and Japan. 
+tickers =[] 
+markets = ['sg', 'in'] 
+exchanges = ['SES', 'NSI'] 
+for i in range(2):  
+# Download ticker information for a specific market.
+    market = markets[i]
+    exchange = exchanges[i]    
+    
+    downloader = yt.StockDownloader()
+    yt.downloadEverything(downloader, 'stocks', None, 0, None, market)
+    data = tablib.Dataset()
+    data.headers = downloader.getRowHeader()
+    for symbol in downloader.getCollectedSymbols():
+        data.append(symbol.getRow())
+
+# Store those ticker for a specific exchange only.             
+    tickers_market = []
+    for ex, tik in zip(data['Exchange'], data['Ticker']):
+        if ex == exchange:
+            tickers_market.append(tik)
+    tickers.append(tickers_market)
+    
+# Create a dictionary to hold the ticker data with exchange as keys. 
+tickers_dict = {}   
+for ex, tiks in zip(exchanges, tickers):
+    tickers_dict[ex] = tiks 
+
+# Open cmd and type in "q -p 5000".
+q = qconnection.QConnection(host = 'localhost', port = 5000, pandas = True)
+q.open()
+# Specify the start and end days for data scraping. 
+start = datetime.datetime(2017, 1, 1)
+end = datetime.datetime(2017, 5, 31)
+
+# Get the stock data for each ticker.  
+# Create a dictionary to hold the tickers whose stock information is downloadable. 
+tickers_selected = {key: None for key in exchanges} 
+for ex in exchanges:
+    tickers_ex = tickers_dict[ex]
+    if ex == "NSI":
+        rs = random.sample(range(len(tickers_ex)), int(len(tickers_ex) / 3)) 
+    else:
+        rs = range(len(tickers_ex))
+    tickers = [tickers_ex[i] for i in rs]
+    tickers_downloaded = []
+
+    for ticker in tickers: 
+        try: 
+# Try to read data from Yahoo Finance via API and try twice for each ticker. 
+            f = web.DataReader(ticker, 'yahoo', start, end, retry_count = 2)
+            f['Ticker'] = ticker
+            f['Date'] = f.index
+# Store the tickers whose stock information has been downloaded. 
+            tickers_downloaded.append(ticker)
+            print(ticker)
+# Store the data frame into the table named after the exchange. 
+            q.sync('insert', numpy.string_(ex), f)
+        except:
+            continue
+    tickers_selected[ex] = tickers_downloaded 
+
+# See all the tables in the KDB cache. 
+    #q.sync('tables `.')  
+    ex = "SES" # ex = "NSI"
+# Save a specific table in the cache into the disk with the specified path and name. 
+    q.sync('`:C:/q/w32/' + ex + ' set ' + ex)
+# Pull out the table from the disk into the KDB cache. 
+    q.sync(ex + '2: get `:C:/q/w32/' + ex)
+# Print the first\last 10 records of the table in the KDB cache. 
+    #q.sync('5#SES')
+    #q.sync('-5#SES')
